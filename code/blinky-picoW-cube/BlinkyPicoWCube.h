@@ -683,6 +683,10 @@ void BlinkyPicoWCube::setupWifiAp()
   setCommLEDPin(true);
   WiFi.disconnect();
   WiFi.mode(WIFI_AP);
+  IPAddress local_IP(192,168,42,1);
+  IPAddress gateway(192,168,42,1);
+  IPAddress subnet(255,255,255,0);
+  WiFi.softAPConfig(local_IP, gateway, subnet);
   WiFi.softAP(g_trayType + "-" + g_trayName);
   if (g_chattyCathy) Serial.print("[+] AP Created with IP Gateway ");
   if (g_chattyCathy) Serial.println(WiFi.softAPIP());
