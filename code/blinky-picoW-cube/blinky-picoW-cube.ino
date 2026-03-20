@@ -1,188 +1,138 @@
-boolean printDiagnostics = false;
+#define BLINKY_DIAG         0
+#define CUBE_DIAG           0
+#define COMM_LED_PIN       16
+#define RST_BUTTON_PIN     15
+#include <BlinkyPicoW.h>
 
-union StationReport
+struct CubeSetting
 {
-  struct
-  {
-    int16_t iaddr;
-    int16_t ivbat;
-    int16_t ivusb;
-    int16_t iwatchdog;
-    int16_t ibutt;
-    int16_t imove;
-    int16_t ichrg;
-    int16_t iauth;
-    int16_t irssi;
-  };
-  uint8_t buffer[18];
+  int16_t authorizeBadge;
+  int16_t sendWarning;
 };
-uint8_t sizeOfStationReport = 18;
+CubeSetting setting;
+CubeSetting oldSetting;
 
-union StationCommand
+struct CubeReading
 {
-  struct
-  {
-    int16_t iaddr;
-    int16_t iwarn;
-    int16_t iauth;
-    int16_t imsid;
-  };
-  uint8_t buffer[8];
+  int16_t iaddr;
+  int16_t ivbat;
+  int16_t ivusb;
+  int16_t iwatchdog;
+  int16_t ibutt;
+  int16_t imove;
+  int16_t ichrg;
+  int16_t iauth;
+  int16_t irssi;
+};
+CubeReading reading;
+
+struct StationCommand
+{
+  int16_t iaddr;
+  int16_t iwarn;
+  int16_t iauth;
+  int16_t imsid;
 };
 StationCommand stationCommand;
-uint8_t sizeOfStationCommand = 8;
-
-union CubeData
-{
-  struct
-  {
-    int16_t state;
-    int16_t watchdog;
-    int16_t newData;
-    int16_t authorizeBadge;
-    int16_t sendWarning;
-    StationReport stationReport;
-  };
-  uint8_t buffer[28];
-};
-CubeData cubeData;
-
-
-#include "BlinkyPicoWCube.h"
-
-
-int commLEDPin = 16;
-int commLEDBright = 255; 
-int resetButtonPin = 15;
 
 unsigned long lastPublishTime;
 unsigned long publishInterval = 30000;
 
-void setupServerComm()
+void setupBlinky()
 {
-  // Optional setup to overide defaults
-  if (printDiagnostics)
+  if (BLINKY_DIAG > 0)
   {
-    Serial.begin(115200);
+    Serial.begin(9600);
+    delay(5000);
   }
-  delay(10000);
-  BlinkyPicoWCube.setChattyCathy(printDiagnostics);
-  BlinkyPicoWCube.setWifiTimeoutMs(20000);
-  BlinkyPicoWCube.setWifiRetryMs(20000);
-  BlinkyPicoWCube.setMqttRetryMs(3000);
-  BlinkyPicoWCube.setResetTimeoutMs(10000);
-  BlinkyPicoWCube.setHdwrWatchdogMs(8000);
-  BlinkyPicoWCube.setBlMqttKeepAlive(8);
-  BlinkyPicoWCube.setBlMqttSocketTimeout(4);
-  BlinkyPicoWCube.setMqttLedFlashMs(10);
-  BlinkyPicoWCube.setWirelesBlinkMs(100);
-  BlinkyPicoWCube.setMaxNoMqttErrors(5);
-  BlinkyPicoWCube.setMaxNoConnectionAttempts(5);
   
-  // Must be included
-  BlinkyPicoWCube.init(commLEDPin, commLEDBright, resetButtonPin);
+  boolean  useFlashStorage = true;
+  
+/*  
+  BlinkyPicoW.setSsid("");
+  BlinkyPicoW.setWifiPassword("");
+  BlinkyPicoW.setMqttServer("");
+  BlinkyPicoW.setMqttUsername("");
+  BlinkyPicoW.setMqttPassword("");
+  BlinkyPicoW.setBox("");
+  BlinkyPicoW.setTrayType("");
+  BlinkyPicoW.setTrayName("");
+  BlinkyPicoW.setCubeType("");
+*/ 
+ 
+  BlinkyPicoW.setMqttKeepAlive(15);
+  BlinkyPicoW.setMqttSocketTimeout(4);
+  BlinkyPicoW.setMqttPort(1883);
+  BlinkyPicoW.setMqttLedFlashMs(100);
+  BlinkyPicoW.setHdwrWatchdogMs(8000);
+  BlinkyPicoW.setRouterDelay(10000);
+
+  BlinkyPicoW.begin(BLINKY_DIAG, COMM_LED_PIN, RST_BUTTON_PIN, useFlashStorage, sizeof(setting), sizeof(reading));
 }
 
 void setupCube()
 {
-  cubeData.state = 1;
-  cubeData.watchdog = 0;
-  cubeData.authorizeBadge = 0;
-  cubeData.sendWarning = 0;
-  cubeData.newData = 0;
-  lastPublishTime = millis();
+  if ((CUBE_DIAG > 0) &&(BLINKY_DIAG == 0 ))
+  {
+    Serial.begin(9600);
+    delay(5000);
+  }
+  setting.authorizeBadge = 0;
+  setting.sendWarning = 0;
+  oldSetting.authorizeBadge = 0; 
+  oldSetting.sendWarning = 0; 
   Serial1.begin(9600);
+  lastPublishTime = millis(); 
 }
-
-void cubeLoop()
+void loopCube()
 {
-  unsigned long nowTime = millis();
-  while (Serial1.available() > 0) 
+  unsigned long now = millis();
+  if ((now - lastPublishTime) > publishInterval)
   {
-    Serial1.readBytes(cubeData.stationReport.buffer, sizeOfStationReport);
-    cubeData.watchdog = cubeData.watchdog + 1;
-    cubeData.newData = 1;
-    if (cubeData.watchdog > 32765) cubeData.watchdog = 0;
-    BlinkyPicoWCube.publishToServer();
-    BlinkyPicoWCube.loop();
-    if (printDiagnostics)
+    lastPublishTime = now;
+    reading.iaddr = 0;
+    reading.ivbat = 0;
+    reading.ivusb = 0;
+    reading.ibutt = 0;
+    reading.imove = 0;
+    reading.ichrg = 0;
+    reading.iauth = 0;
+    reading.iaddr = 0;
+    reading.iwatchdog = 0;
+    reading.irssi = 0;
+
+    boolean successful = BlinkyPicoW.publishCubeData((uint8_t*) &setting, (uint8_t*) &reading, false);
+  }
+
+  if(BlinkyPicoW.retrieveCubeSetting((uint8_t*) &setting))
+  {
+    if (oldSetting.authorizeBadge != setting.authorizeBadge)
     {
-      Serial.print("addr: ");
-      Serial.print(cubeData.stationReport.iaddr);
-      Serial.print(", vbat: ");
-      Serial.print(cubeData.stationReport.ivbat);
-      Serial.print(", vusb: ");
-      Serial.print(cubeData.stationReport.ivusb);
-      Serial.print(", butt: ");
-      Serial.print(cubeData.stationReport.ibutt);
-      Serial.print(", move: ");
-      Serial.print(cubeData.stationReport.imove);
-      Serial.print(", chrg: ");
-      Serial.print(cubeData.stationReport.ichrg);
-      Serial.print(", auth: ");
-      Serial.print(cubeData.stationReport.iauth);
-      Serial.print(", wdog: ");
-      Serial.print(cubeData.stationReport.iwatchdog);
-      Serial.print(", rssi: ");
-      Serial.println(cubeData.stationReport.irssi);
-    }
-    cubeData.newData = 0;
-    cubeData.stationReport.iaddr = 0;
-    cubeData.stationReport.ivbat = 0;
-    cubeData.stationReport.ivusb = 0;
-    cubeData.stationReport.ibutt = 0;
-    cubeData.stationReport.imove = 0;
-    cubeData.stationReport.ichrg = 0;
-    cubeData.stationReport.iauth = 0;
-    cubeData.stationReport.iaddr = 0;
-    cubeData.stationReport.iwatchdog = 0;
-    cubeData.stationReport.irssi = 0;
-    lastPublishTime = nowTime;
-  }
-  
-  if ((nowTime - lastPublishTime) > publishInterval)
-  {
-    lastPublishTime = nowTime;
-    cubeData.watchdog = cubeData.watchdog + 1;
-    if (cubeData.watchdog > 32760) cubeData.watchdog= 0 ;
-    BlinkyPicoWCube.publishToServer();
-  } 
-}
-
-void handleNewSettingFromServer(uint8_t address)
-{
-  if (printDiagnostics)
-  {
-      Serial.print("New Setting Address: ");
-      Serial.println(address);
-  }
-  switch(address)
-  {
-    case 3:
-      stationCommand.iaddr = cubeData.authorizeBadge & 255;
-      stationCommand.imsid = (cubeData.authorizeBadge >> 12) & 15;
+      stationCommand.iaddr = setting.authorizeBadge & 255;
+      stationCommand.imsid = (setting.authorizeBadge >> 12) & 15;
       stationCommand.iauth = 1;
       stationCommand.iwarn = 0;
-      if (printDiagnostics)
+      if (CUBE_DIAG > 0)
       {
-          Serial.print("cubeData.authorizeBadge: ");
-          Serial.println(cubeData.authorizeBadge);
+          Serial.print("setting.authorizeBadge: ");
+          Serial.println(setting.authorizeBadge);
           Serial.print("stationCommand.iaddr: ");
           Serial.println(stationCommand.iaddr);
           Serial.print("stationCommand.imsid: ");
           Serial.println(stationCommand.imsid);
       }
-      Serial1.write(stationCommand.buffer, sizeOfStationCommand);
-      break;
-    case 4:
-      stationCommand.iaddr = cubeData.sendWarning & 255;
-      stationCommand.imsid = (cubeData.sendWarning >> 12) & 15;
-      stationCommand.iwarn = (cubeData.sendWarning >> 8) & 15;
+      Serial1.write((uint8_t*) &stationCommand, sizeof(StationCommand));
+    }
+    if (oldSetting.sendWarning != setting.sendWarning)
+    {
+      stationCommand.iaddr = setting.sendWarning & 255;
+      stationCommand.imsid = (setting.sendWarning >> 12) & 15;
+      stationCommand.iwarn = (setting.sendWarning >> 8) & 15;
       stationCommand.iauth = 0;
-      if (printDiagnostics)
+      if (CUBE_DIAG > 0)
       {
-          Serial.print("cubeData.sendWarning: ");
-          Serial.println(cubeData.sendWarning);
+          Serial.print("setting.sendWarning: ");
+          Serial.println(setting.sendWarning);
           Serial.print("stationCommand.iaddr: ");
           Serial.println(stationCommand.iaddr);
           Serial.print("stationCommand.imsid: ");
@@ -190,11 +140,39 @@ void handleNewSettingFromServer(uint8_t address)
           Serial.print("stationCommand.iwarn: ");
           Serial.println(stationCommand.iwarn);
       }
-      Serial1.write(stationCommand.buffer, sizeOfStationCommand);
-      break;
-    case 5:
-      break;
-    default:
-      break;
+      Serial1.write((uint8_t*) &stationCommand, sizeof(StationCommand));
+    }
+    oldSetting.authorizeBadge = setting.authorizeBadge; 
+    oldSetting.sendWarning = setting.sendWarning; 
   }
+
+  while (Serial1.available() > 0) 
+  {
+    Serial1.readBytes((uint8_t*) &reading, sizeof(reading));
+    if (CUBE_DIAG > 0)
+    {
+      Serial.print("addr: ");
+      Serial.print(reading.iaddr);
+      Serial.print(", vbat: ");
+      Serial.print(reading.ivbat);
+      Serial.print(", vusb: ");
+      Serial.print(reading.ivusb);
+      Serial.print(", butt: ");
+      Serial.print(reading.ibutt);
+      Serial.print(", move: ");
+      Serial.print(reading.imove);
+      Serial.print(", chrg: ");
+      Serial.print(reading.ichrg);
+      Serial.print(", auth: ");
+      Serial.print(reading.iauth);
+      Serial.print(", wdog: ");
+      Serial.print(reading.iwatchdog);
+      Serial.print(", rssi: ");
+      Serial.println(reading.irssi);
+    }
+    lastPublishTime = now;
+    boolean successful = BlinkyPicoW.publishCubeData((uint8_t*) &setting, (uint8_t*) &reading, true);
+  }
+
+
 }
